@@ -57,6 +57,7 @@ pub fn parse_harness(s: &str) -> Option<HarnessKind> {
     match s.to_ascii_lowercase().as_str() {
         "claude" | "claude-code" | "claudecode" | "cc" => Some(HarnessKind::ClaudeCode),
         "codex" | "cx" => Some(HarnessKind::Codex),
+        "copilot" | "cp" => Some(HarnessKind::Copilot),
         "opencode" | "oc" => Some(HarnessKind::Opencode),
         "pi" => Some(HarnessKind::Pi),
         "omp" | "om" => Some(HarnessKind::Omp),
@@ -65,9 +66,10 @@ pub fn parse_harness(s: &str) -> Option<HarnessKind> {
 }
 
 /// The harnesses ctrl-t cycles through, after "all".
-const HARNESS_CYCLE: [HarnessKind; 5] = [
+const HARNESS_CYCLE: [HarnessKind; 6] = [
     HarnessKind::ClaudeCode,
     HarnessKind::Codex,
+    HarnessKind::Copilot,
     HarnessKind::Opencode,
     HarnessKind::Pi,
     HarnessKind::Omp,
@@ -233,6 +235,7 @@ mod tests {
     #[case("agent:cc", Some(HarnessKind::ClaudeCode))]
     #[case("agent:claude-code", Some(HarnessKind::ClaudeCode))]
     #[case("agent:cx", Some(HarnessKind::Codex))]
+    #[case("agent:cp", Some(HarnessKind::Copilot))]
     #[case("agent:oc", Some(HarnessKind::Opencode))]
     #[case("agent:codex agent:pi", Some(HarnessKind::Pi))]
     #[case("agent:PI", Some(HarnessKind::Pi))]
@@ -315,7 +318,8 @@ mod tests {
     #[case("flaky", "flaky agent:claude-code")]
     #[case("flaky ", "flaky agent:claude-code")]
     #[case("agent:claude flaky", "agent:codex flaky")]
-    #[case("flaky agent:codex", "flaky agent:opencode")]
+    #[case("flaky agent:codex", "flaky agent:copilot")]
+    #[case("agent:copilot", "agent:opencode")]
     #[case("agent:opencode", "agent:pi")]
     #[case("agent:pi", "agent:omp")]
     #[case("agent:omp", "")]
@@ -324,7 +328,7 @@ mod tests {
     #[case("agent:codex,pi x", "agent:claude-code x")]
     #[case("agent:vim", "agent:claude-code")]
     #[case("a:claude flaky", "agent:codex flaky")]
-    #[case("flaky a:cx", "flaky agent:opencode")]
+    #[case("flaky a:cx", "flaky agent:copilot")]
     #[case("a:om", "")]
     #[case("a:", "agent:claude-code")]
     #[case("h:codex", "h:codex agent:claude-code")]
@@ -335,7 +339,7 @@ mod tests {
     #[rstest]
     fn alt_a_round_trips() {
         let mut s = String::from("bug");
-        for _ in 0..6 {
+        for _ in 0..7 {
             s = cycle_harness(&s);
         }
         assert_eq!(s, "bug");

@@ -46,6 +46,10 @@ pub enum NotResumable {
     #[error("`{0}` isn't installed here (not found on PATH)")]
     NotInstalled(String),
 
+    /// The session's transcript isn't here, and atuin can't write its harness's to restore it.
+    #[error("it isn't on this machine, and atuin can't restore {0} sessions")]
+    NotHere(&'static str),
+
     #[error("restoring it from sync failed: {0}")]
     Restore(String),
 
@@ -640,6 +644,9 @@ impl HarnessResumer {
                 };
                 (resume, Some(Copy { tip, dir }))
             }
+            None if !harness.writes_sessions() => {
+                return Err(NotResumable::NotHere(harness_label(kind)));
+            }
             None => {
                 let restore = resolve_cwd(session.cwd.as_deref(), &self.context);
                 target.cwd = Some(restore.cwd.clone());
@@ -865,14 +872,17 @@ impl Resumer for HarnessResumer {
         }
         AnyHarness::all()
             .iter()
+            .filter(|harness| harness.writes_sessions())
             .map(HarnessKind::from)
             .filter(|kind| *kind != own && self.runs_here(*kind, session))
             .collect()
     }
 
-    /// Every harness atuin writes forks (Copilot isn't one), when installed.
+    /// Every harness atuin writes sessions of forks (Copilot doesn't), when installed.
     fn can_fork(&self, session: &SessionRow) -> bool {
-        self.runs_here(session.handle.harness, session)
+        let kind = session.handle.harness;
+        kind.harness().is_some_and(|harness| harness.writes_sessions())
+            && self.runs_here(kind, session)
     }
 
     async fn fork(

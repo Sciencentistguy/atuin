@@ -102,14 +102,14 @@ pub enum Cmd {
     Enable,
 }
 
-// Only harnesses a capture path can actually produce are offered as filters (see AnyHarness);
-// Copilot has no capture source yet, so advertising it would return empty for every query.
+// Only harnesses a capture path can actually produce are offered as filters (see AnyHarness).
 // Also the MCP tools' harness filter, so the CLI and the tools accept the same names.
 #[derive(Copy, Clone, Debug, ValueEnum, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum HarnessArg {
     ClaudeCode,
     Codex,
+    Copilot,
     Opencode,
     Pi,
     Omp,
@@ -120,6 +120,7 @@ impl From<HarnessArg> for HarnessKind {
         match value {
             HarnessArg::ClaudeCode => Self::ClaudeCode,
             HarnessArg::Codex => Self::Codex,
+            HarnessArg::Copilot => Self::Copilot,
             HarnessArg::Opencode => Self::Opencode,
             HarnessArg::Pi => Self::Pi,
             HarnessArg::Omp => Self::Omp,
@@ -1043,11 +1044,12 @@ fn parse_harness(value: &str) -> Result<HarnessKind, String> {
     match value {
         "claude-code" => Ok(HarnessKind::ClaudeCode),
         "codex" => Ok(HarnessKind::Codex),
+        "copilot" => Ok(HarnessKind::Copilot),
         "opencode" => Ok(HarnessKind::Opencode),
         "pi" => Ok(HarnessKind::Pi),
         "omp" => Ok(HarnessKind::Omp),
         other => Err(format!(
-            "unknown harness `{other}` (expected claude-code, codex, opencode, pi, or omp)"
+            "unknown harness `{other}` (expected claude-code, codex, copilot, opencode, pi, or omp)"
         )),
     }
 }
@@ -1403,6 +1405,7 @@ mod tests {
     #[rstest]
     #[case("claude-code", HarnessKind::ClaudeCode)]
     #[case("codex", HarnessKind::Codex)]
+    #[case("copilot", HarnessKind::Copilot)]
     #[case("opencode", HarnessKind::Opencode)]
     #[case("pi", HarnessKind::Pi)]
     #[case("omp", HarnessKind::Omp)]
@@ -1412,7 +1415,7 @@ mod tests {
 
     #[rstest]
     fn parse_harness_rejects_unknown_harnesses() {
-        assert!(parse_harness("copilot").is_err());
+        assert!(parse_harness("cursor").is_err());
     }
 
     #[rstest]
@@ -1808,6 +1811,7 @@ mod tests {
     #[rstest]
     #[case(HarnessArg::ClaudeCode, HarnessKind::ClaudeCode)]
     #[case(HarnessArg::Codex, HarnessKind::Codex)]
+    #[case(HarnessArg::Copilot, HarnessKind::Copilot)]
     #[case(HarnessArg::Opencode, HarnessKind::Opencode)]
     #[case(HarnessArg::Pi, HarnessKind::Pi)]
     fn harness_arg_maps_to_pb(#[case] arg: HarnessArg, #[case] expected: HarnessKind) {

@@ -321,7 +321,7 @@ fn tool_definitions() -> Vec<Tool> {
         Tool::new(
             "atuin_threads_search",
             "Full-text search across the transcripts of the threads (AI coding-agent sessions) \
-             Atuin has captured (Claude Code, Codex, opencode, pi). Reach for it when a task \
+             Atuin has captured (Claude Code, Codex, Copilot, opencode, pi). Reach for it when a task \
              points at earlier work ('again', 'still', 'continue', a known issue, what was \
              decided): a previous agent may already have diagnosed or decided it. Finds which \
              thread discussed a topic, hit an error, touched a file, or made a decision — it \
@@ -334,12 +334,13 @@ fn tool_definitions() -> Vec<Tool> {
         .annotate(ToolAnnotations::with_title("Search agent threads").read_only(true)),
         Tool::new(
             "atuin_threads_list",
-            "List captured threads, AI coding-agent sessions (Claude Code, Codex, opencode, pi), \
-             most recently active first, optionally only those in a directory (cwd: '.' for this \
-             project) or active since a time (since: 'today'). Use it to pick up where the \
-             previous thread on this project left off ('continue', 'last time') or to see what \
-             agents worked on recently, when you have no specific words to search for. Each entry \
-             gives the thread id, harness, last-active time, message count, title, and directory. \
+            "List captured threads, AI coding-agent sessions (Claude Code, Codex, Copilot, \
+             opencode, pi), most recently active first, optionally only those in a directory \
+             (cwd: '.' for this project) or active since a time (since: 'today'). Use it to pick \
+             up where the previous thread on this project left off ('continue', 'last time') or \
+             to see what agents worked on recently, when you have no specific words to search \
+             for. Each entry gives the thread id, harness, last-active time, message count, \
+             title, and directory. \
              Requires the Atuin daemon with thread capture enabled.",
             schema_for_type::<AtuinThreadsListToolCall>(),
         )
@@ -489,7 +490,7 @@ mod tests {
             );
         }
         assert!(
-            parse(json!({"terms": ["x"], "harness": "copilot"})).is_err(),
+            parse(json!({"terms": ["x"], "harness": "cursor"})).is_err(),
             "an unadvertised harness is rejected"
         );
     }

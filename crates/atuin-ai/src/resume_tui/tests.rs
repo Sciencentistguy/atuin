@@ -1116,7 +1116,23 @@ async fn an_original_that_cant_resume_is_dimmed_and_passed_over() {
         state.plans.remove(&row.handle);
     }
 
-    // A harness atuin can't continue from (Copilot) has only its own line, saying why.
+    // A harness atuin has no tools for has only its own line, saying why.
+    let mut unknown = fake::row(HarnessKind::Unknown, "u1", "t");
+    unknown.host_id = fake::THIS_HOST_ID.to_owned();
+    state.results = vec![unknown.clone()];
+    state.list.selected = 0;
+    state.plans.insert(unknown.handle.clone(), FakeResumer::default().plan(&unknown).await);
+    state.open_chooser(
+        &unknown,
+        FakeResumer::default().continue_targets(&unknown),
+        FakeResumer::default().can_fork(&unknown),
+        Pending::Resume,
+    );
+    let out = text(&render(&mut state, &s, 100, 30));
+    assert!(out.contains("> 1 unknown  resume: atuin can't resume"), "{out}");
+    assert!(!out.contains("fork:"), "atuin can't fork it either: {out}");
+
+    // A Copilot session resumes in Copilot and continues in the others, but isn't forked.
     let mut copilot = fake::row(HarnessKind::Copilot, "cp1", "t");
     copilot.host_id = fake::THIS_HOST_ID.to_owned();
     state.results = vec![copilot.clone()];
@@ -1129,8 +1145,9 @@ async fn an_original_that_cant_resume_is_dimmed_and_passed_over() {
         Pending::Resume,
     );
     let out = text(&render(&mut state, &s, 100, 30));
-    assert!(out.contains("> 1 Copilot  resume: atuin can't resume"), "{out}");
-    assert!(!out.contains("fork:"), "atuin can't fork it either: {out}");
+    assert!(out.contains("> 1 Copilot      resume"), "{out}");
+    assert!(out.contains("2 Claude Code"), "{out}");
+    assert!(!out.contains("fork:"), "atuin can't fork it: {out}");
 }
 
 /// Forking sits right under the original: `f` selects it, its digit picks it, and enter, tab and

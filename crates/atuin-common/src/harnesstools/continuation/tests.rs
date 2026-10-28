@@ -10,6 +10,8 @@ use crate::harnesstools::ccode::Ccode;
 use crate::harnesstools::ccode::session::{CcodeMessage, CcodeSession};
 use crate::harnesstools::codex::Codex;
 use crate::harnesstools::codex::session::CodexSession;
+use crate::harnesstools::copilot::Copilot;
+use crate::harnesstools::copilot::session::CopilotSession;
 use crate::harnesstools::opencode::Opencode;
 use crate::harnesstools::pi::Pi;
 use crate::harnesstools::pi::session::PiSession;
@@ -21,8 +23,11 @@ use crate::sync::BlockingPool;
 
 pub const CLAUDE: AnyHarness = AnyHarness::ClaudeCode(Ccode);
 pub const CODEX: AnyHarness = AnyHarness::Codex(Codex);
+pub const COPILOT: AnyHarness = AnyHarness::Copilot(Copilot);
 pub const OPENCODE: AnyHarness = AnyHarness::Opencode(Opencode);
 pub const PI: AnyHarness = AnyHarness::Pi(Pi::PI);
+/// Why a match on a continuation's target has no Copilot arm to speak of.
+pub const NEVER_A_TARGET: &str = "atuin doesn't write Copilot sessions";
 /// The original's atuin id, as the picker passes it.
 const ATUIN_ID: &str = "01a0d147e7457ae280000123456789ab";
 
@@ -136,6 +141,21 @@ async fn read(source: AnyHarness) -> RehydrateSession {
             }
             session_of(&id, rows)
         }
+        AnyHarness::Copilot(_) => {
+            let id = "5e0f2a3c-8d41-4b6e-9a77-3c1d2e4f5a6b";
+            let lines: Vec<_> = CopilotSession::open(
+                SessionId::from(id.to_owned()),
+                fixture("copilot/session1.jsonl"),
+                pool(),
+            )
+            .read()
+            .try_collect()
+            .await
+            .unwrap();
+            // Capture keeps only the lines that make a row.
+            let lines: Vec<_> = lines.into_iter().filter(|m| m.id().is_some()).collect();
+            session_of(id, rows_of(&lines))
+        }
         AnyHarness::Pi(_) => {
             let id = "372bddb6-5d16-1553-fe79-3ffc84a47b20";
             let lines: Vec<_> = PiSession::open(
@@ -160,6 +180,7 @@ fn assert_ids(target: AnyHarness, session: &RehydrateSession) {
         AnyHarness::ClaudeCode(_) => assert!(uuid(id), "{id}"),
         AnyHarness::Codex(_) => assert_eq!(Uuid::parse_str(id).unwrap().get_version_num(), 7),
         AnyHarness::Pi(_) => assert_eq!(Uuid::parse_str(id).unwrap().get_version_num(), 7),
+        AnyHarness::Copilot(_) => unreachable!("{NEVER_A_TARGET}"),
         AnyHarness::Opencode(_) => {
             let rest = id.strip_prefix("ses_").unwrap();
             assert_eq!(rest.len(), 26, "{id}");
@@ -180,6 +201,7 @@ fn assert_ids(target: AnyHarness, session: &RehydrateSession) {
             AnyHarness::Pi(_) => {
                 assert!(id.len() == 8 && id.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
             }
+            AnyHarness::Copilot(_) => unreachable!("{NEVER_A_TARGET}"),
         }
     }
     // Rows sort by id in time order where the target orders by id.
@@ -300,6 +322,7 @@ fn assert_shape(target: AnyHarness, source: AnyHarness, original: &str, s: &Rehy
             }
             // A part per call, holding its result.
             AnyHarness::Opencode(_) => ids(m, true),
+            AnyHarness::Copilot(_) => unreachable!("{NEVER_A_TARGET}"),
         };
         assert_eq!(answered, called, "row {n}'s calls are answered");
     }
@@ -316,7 +339,7 @@ fn assert_shape(target: AnyHarness, source: AnyHarness, original: &str, s: &Rehy
 #[rstest]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_pair_continues_in_the_targets_shape(
-    #[values(CLAUDE, CODEX, OPENCODE, PI)] source: AnyHarness,
+    #[values(CLAUDE, CODEX, COPILOT, OPENCODE, PI)] source: AnyHarness,
     #[values(CLAUDE, CODEX, OPENCODE, PI)] target: AnyHarness,
 ) {
     if source.name() == target.name() {
@@ -409,6 +432,7 @@ async fn written(target: AnyHarness, session: &RehydrateSession) -> Vec<Rehydrat
             );
             rows
         }
+        AnyHarness::Copilot(_) => unreachable!("{NEVER_A_TARGET}"),
     }
 }
 
@@ -455,7 +479,7 @@ fn conversation(rows: &[RehydrateMessage]) -> Vec<(Role, String)> {
 #[rstest]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_target_reads_back_the_conversation_and_its_parent(
-    #[values(CLAUDE, CODEX, OPENCODE, PI)] source: AnyHarness,
+    #[values(CLAUDE, CODEX, COPILOT, OPENCODE, PI)] source: AnyHarness,
     #[values(CLAUDE, CODEX, OPENCODE, PI)] target: AnyHarness,
 ) {
     if source.name() == target.name() {

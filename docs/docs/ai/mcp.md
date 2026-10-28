@@ -1,6 +1,6 @@
 # MCP Server
 
-Atuin ships with a built-in [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server, giving AI agents like Claude Code, Codex, opencode, pi and Cursor access to your shell history. Your agent can look up commands you've run before, check whether they succeeded, and — with [output capture](../guide/output-capture.md) set up — read what they printed, or search that output for something it remembers seeing.
+Atuin ships with a built-in [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server, giving AI agents like Claude Code, Codex, GitHub Copilot CLI, opencode, pi and Cursor access to your shell history. Your agent can look up commands you've run before, check whether they succeeded, and — with [output capture](../guide/output-capture.md) set up — read what they printed, or search that output for something it remembers seeing.
 
 The server exposes the same history tools that [Atuin AI](./introduction.md) uses, plus output search and search over your agent [threads](./threads.md). All tools are read-only: nothing can modify or delete your history, and all data stays on your machine.
 
@@ -12,7 +12,7 @@ Connect all your configured agents with one command:
 atuin mcp install
 ```
 
-Atuin checks for existing user config files for Claude Code, Codex, opencode, pi and oh-my-pi (`omp`), lists the agents it found and asks once before registering the MCP server with all of them. Agents without a config file are skipped. You can also target one directly with `atuin mcp install claude-code` (or `codex`, `opencode`, `pi`, `omp`), including when its config file doesn't exist yet.
+Atuin checks for existing user config files for Claude Code, Codex, GitHub Copilot CLI, opencode, pi and oh-my-pi (`omp`), lists the agents it found and asks once before registering the MCP server with all of them. Agents without a config file are skipped. You can also target one directly with `atuin mcp install claude-code` (or `codex`, `copilot`, `opencode`, `pi`, `omp`), including when its config file doesn't exist yet.
 
 Then restart the agents you connected. They can now search your shell history.
 
@@ -91,6 +91,23 @@ pi mcp add atuin -- atuin mcp
 ```
 
 This adds it to `~/.pi/agent/mcp.json`. Check it with `pi mcp list`.
+
+### GitHub Copilot CLI
+
+Add it to `~/.copilot/mcp-config.json` (under `$COPILOT_HOME` if set), or with Copilot's own `/mcp add`:
+
+```json
+{
+  "mcpServers": {
+    "atuin": {
+      "type": "local",
+      "command": "atuin",
+      "args": ["mcp"],
+      "tools": ["*"]
+    }
+  }
+}
+```
 
 ### Cursor
 
@@ -200,7 +217,7 @@ Like `atuin_output`, this needs output capture set up and the daemon running.
 
 ### `atuin_threads_search`, `atuin_threads_list` and `atuin_threads_read`
 
-Search, list and read your [threads](./threads.md): the sessions of your coding agents (Claude Code, Codex, opencode and pi) that Atuin has captured. An agent can pick up where another left off, or check what was decided last time, without you explaining it again.
+Search, list and read your [threads](./threads.md): the sessions of your coding agents (Claude Code, Codex, GitHub Copilot CLI, opencode and pi) that Atuin has captured. An agent can pick up where another left off, or check what was decided last time, without you explaining it again.
 
 These need thread capture turned on with `atuin config enable threads`.
 

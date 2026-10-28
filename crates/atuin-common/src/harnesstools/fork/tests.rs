@@ -8,7 +8,7 @@ use super::*;
 use crate::harnesstools::ccode::session::CcodeSession;
 use crate::harnesstools::codex::session::CodexSession;
 use crate::harnesstools::continuation::tests::{
-    CLAUDE, CODEX, OPENCODE, PI, pool, recorded, rows_of,
+    CLAUDE, CODEX, NEVER_A_TARGET, OPENCODE, PI, pool, recorded, rows_of,
 };
 use crate::harnesstools::continuation::{fork_marker_text, linked_from_message};
 use crate::harnesstools::opencode::rehydrate::tests::{captured, database, opencode_import};
@@ -111,6 +111,7 @@ async fn written(
                 .collect();
             (rows, links)
         }
+        AnyHarness::Copilot(_) => unreachable!("{NEVER_A_TARGET}"),
     }
 }
 

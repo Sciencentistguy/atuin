@@ -8,6 +8,7 @@ pub mod access;
 pub mod ccode;
 pub mod codex;
 pub mod continuation;
+pub mod copilot;
 pub mod fork;
 mod json_hooks;
 pub mod mcp;
@@ -21,6 +22,7 @@ pub mod sync;
 
 use ccode::Ccode;
 use codex::Codex;
+use copilot::Copilot;
 use opencode::Opencode;
 use pi::Pi;
 use rehydrate::{RehydrateError, RehydrateSession};
@@ -41,6 +43,14 @@ pub trait Harness: std::fmt::Debug {
     /// There is a default implementation -- the empty set.
     fn alias_names(&self) -> &'static [&'static str] {
         &[]
+    }
+
+    /// Whether atuin can write this harness's sessions ([`Self::rehydrate`]), so a session can be
+    /// restored, forked or continued in it.
+    ///
+    /// There is a default implementation -- it can.
+    fn writes_sessions(&self) -> bool {
+        true
     }
 
     /// Install this harness's hooks on the current user's machine, returning the path written.
@@ -85,6 +95,7 @@ pub trait Harness: std::fmt::Debug {
 pub enum AnyHarness {
     ClaudeCode(Ccode),
     Codex(Codex),
+    Copilot(Copilot),
     Opencode(Opencode),
     Pi(Pi),
 }
@@ -151,6 +162,7 @@ impl AnyHarness {
         &[
             Self::ClaudeCode(Ccode),
             Self::Codex(Codex),
+            Self::Copilot(Copilot),
             Self::Opencode(Opencode),
             Self::Pi(Pi::PI),
             Self::Pi(Pi::OMP),
@@ -163,6 +175,7 @@ impl AnyHarness {
         match self {
             Self::ClaudeCode(h) => Some(h.sessions(pool.clone()).into()),
             Self::Codex(h) => Some(h.sessions(pool.clone()).into()),
+            Self::Copilot(h) => Some(h.sessions(pool.clone()).into()),
             Self::Opencode(h) => Some(h.sessions(pool.clone()).into()),
             Self::Pi(h) => Some(h.sessions(pool.clone()).into()),
         }

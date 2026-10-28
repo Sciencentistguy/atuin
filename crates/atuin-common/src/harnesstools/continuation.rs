@@ -141,6 +141,7 @@ fn label(harness: AnyHarness) -> &'static str {
     match harness {
         AnyHarness::ClaudeCode(_) => "Claude Code",
         AnyHarness::Codex(_) => "Codex",
+        AnyHarness::Copilot(_) => "Copilot",
         AnyHarness::Opencode(_) => "opencode",
         AnyHarness::Pi(pi) => match pi.flavour() {
             Flavour::Pi => "Pi",
@@ -471,7 +472,8 @@ impl Rows {
                     }
                 }
             }
-            AnyHarness::Codex(_) | AnyHarness::Opencode(_) => {
+            // Copilot is never a target (atuin doesn't write its sessions).
+            AnyHarness::Codex(_) | AnyHarness::Copilot(_) | AnyHarness::Opencode(_) => {
                 if let Some(text) = text {
                     self.push(at, Role::Assistant, vec![text], Some(StopReason::EndTurn));
                 }
@@ -790,7 +792,9 @@ impl Ids {
     fn session(&self) -> String {
         match self.target {
             AnyHarness::ClaudeCode(_) => Uuid::new_v4().to_string(),
-            AnyHarness::Codex(_) | AnyHarness::Pi(_) => Uuid::now_v7().to_string(),
+            AnyHarness::Codex(_) | AnyHarness::Copilot(_) | AnyHarness::Pi(_) => {
+                Uuid::now_v7().to_string()
+            }
             AnyHarness::Opencode(_) => {
                 opencode::rehydrate::mint_session(self.now, &Uuid::new_v4().to_string())
             }
@@ -805,7 +809,7 @@ impl Ids {
     fn row(&mut self, at: OffsetDateTime) -> String {
         loop {
             let id = match self.target {
-                AnyHarness::ClaudeCode(_) => Uuid::new_v4().to_string(),
+                AnyHarness::ClaudeCode(_) | AnyHarness::Copilot(_) => Uuid::new_v4().to_string(),
                 AnyHarness::Codex(_) => format!("syn-{}", Uuid::new_v4().as_simple()),
                 AnyHarness::Opencode(_) => {
                     opencode::rehydrate::mint_part(at, &Uuid::new_v4().to_string())

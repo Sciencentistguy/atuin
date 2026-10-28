@@ -89,7 +89,9 @@ impl Canonical {
                 | "exec_command"
                 | "local_shell"
                 | "read"
+                | "view"
                 | "write"
+                | "create"
                 | "edit"
                 | "grep"
                 | "glob"
@@ -122,14 +124,15 @@ impl Canonical {
                 }
                 Self::Shell { command }
             }
-            "read" => Self::Read {
+            // Copilot's file tools: `view`, `create`, `edit`.
+            "read" | "view" => Self::Read {
                 path: path()?,
                 offset: input.get("offset").filter(|v| v.is_number()).cloned(),
                 limit: input.get("limit").filter(|v| v.is_number()).cloned(),
             },
-            "write" => Self::Write {
+            "write" | "create" => Self::Write {
                 path: path()?,
-                content: string(&input, &["content"])?,
+                content: string(&input, &["content", "file_text"])?,
             },
             "edit" => {
                 // pi's edit takes its replacements as `edits`; only one is an edit the others make.
@@ -142,8 +145,8 @@ impl Canonical {
                 };
                 Self::Edit {
                     path: path()?,
-                    old: string(&one, &["old_string", "oldString", "oldText"])?,
-                    new: string(&one, &["new_string", "newString", "newText"])?,
+                    old: string(&one, &["old_string", "oldString", "oldText", "old_str"])?,
+                    new: string(&one, &["new_string", "newString", "newText", "new_str"])?,
                     all: ["replace_all", "replaceAll"]
                         .iter()
                         .any(|k| one.get(*k).and_then(Value::as_bool) == Some(true)),
@@ -276,7 +279,7 @@ const fn path_key(target: AnyHarness) -> &'static str {
     match target {
         AnyHarness::ClaudeCode(_) => "file_path",
         AnyHarness::Opencode(_) => "filePath",
-        AnyHarness::Codex(_) | AnyHarness::Pi(_) => "path",
+        AnyHarness::Codex(_) | AnyHarness::Copilot(_) | AnyHarness::Pi(_) => "path",
     }
 }
 
@@ -385,6 +388,17 @@ fn native(target: AnyHarness, name: &str) -> bool {
             "todowrite",
             "todoread",
             "patch",
+        ],
+        AnyHarness::Copilot(_) => &[
+            "bash",
+            "powershell",
+            "view",
+            "create",
+            "edit",
+            "grep",
+            "glob",
+            "task",
+            "web_fetch",
         ],
         AnyHarness::Pi(_) => &["bash", "read", "write", "edit", "grep", "find", "ls"],
     };

@@ -13,8 +13,8 @@ isn't already, and offers to import the sessions your agents already have.
 `atuin config disable threads` turns it off again.
 
 With `capture = true` under `[threads]`, the Atuin daemon records the
-sessions of your AI coding agents (Claude Code, Codex, opencode and Pi) as
-threads into the encrypted record store, and syncs them like your history.
+sessions of your AI coding agents (Claude Code, Codex, GitHub Copilot CLI,
+opencode and Pi) as threads into the encrypted record store, and syncs them like your history.
 `atuin threads` lists, shows, searches and follows them.
 
 The daemon keeps a local search index of these threads beside the record
@@ -40,6 +40,15 @@ the files read and written). A session resumed from them, on this machine or
 another, has its tool calls back as they were, and so does a session continued
 in another agent (see [Resuming](#resuming)). Reasoning is kept only as a marker
 that the model reasoned.
+
+Copilot keeps less of a session than the others: Atuin reads its event log
+(`~/.copilot/session-state/<id>/events.jsonl`, under `$COPILOT_HOME` if set),
+which records only how many tokens each reply took, so a Copilot thread's
+usage counts output tokens only. What a subagent did is kept as the call that
+ran it and its result, not as a thread of its own. Atuin doesn't write
+Copilot's sessions, so a Copilot thread resumes in Copilot only on a machine
+that has it, and can't be forked or caught up with sync; it can still be
+continued in another agent.
 
 When an agent edits a file, capture also keeps the diff the agent recorded for
 the edit (Claude Code, Codex, opencode and pi each keep one), so a resumed
@@ -176,7 +185,8 @@ Words in the query of the form `filter:value` narrow the search further, and sho
 as chips in the input:
 
 - `agent:<name>` (or `a:<name>` for short): only that agent's threads, with
-  `claude-code` (or `claude`, `cc`), `codex` (`cx`), `opencode` (`oc`) or `pi`.
+  `claude-code` (or `claude`, `cc`), `codex` (`cx`), `copilot` (`cp`),
+  `opencode` (`oc`) or `pi`.
   ++ctrl+t++ cycles through them in turn, and back to all agents.
 - `m:<model>`: only threads whose model contains this, as in `m:opus`.
 - `b:<branch>`: only threads on this git branch.
@@ -278,8 +288,8 @@ back.
   see it too). Agents that aren't installed aren't listed, and with nothing
   else to offer (no other agent installed, and a session that can't be
   forked) ++enter++ resumes straight away.
-- If the session's own agent can't resume it here (a Copilot session, an
-  agent that isn't installed, or a session whose transcript is here but whose
+- If the session's own agent can't resume it here (a Copilot session from
+  another machine, an agent that isn't installed, or a session whose transcript is here but whose
   directory is gone, for an agent that needs it), its line is dimmed with the
   reason, and the next one is selected instead.
 
@@ -329,7 +339,7 @@ session as possibly open, and doesn't catch it up, while one of that agent's
 processes works in the session's directory or below it: the directory this
 copy records, or else where the session works on this machine. A process elsewhere
 counts when its command line names the session (`opencode -s <id>`,
-`codex resume <id>`, `pi --session <file>`). While the session's transcript has
+`codex resume <id>`, `copilot --resume=<id>`, `pi --session <file>`). While the session's transcript has
 changed in the last two minutes, any running process of that agent counts,
 wherever it works.
 
@@ -405,7 +415,7 @@ mouse = true
 
 To resume an agent's sessions with a command of your own in place of the
 built-in one, give a template per agent under `[threads.resume]` (`claude`,
-`codex`, `opencode` or `pi`). It runs after `cd -- <cwd> &&`, with these
+`codex`, `copilot`, `opencode` or `pi`). It runs after `cd -- <cwd> &&`, with these
 substituted:
 
 - `{id}`: the agent's own id for the session;

@@ -447,8 +447,17 @@ async fn a_harness_not_installed_here_says_so(dirs: Dirs) {
 async fn unsupported_sessions_and_subagents_are_not_resumable(dirs: Dirs) {
     let machine = FakeMachine::default();
     let resumer = resumer(&dirs, &machine);
-    let copilot = row(HarnessKind::Copilot, "cp-1", &dirs.here, false);
-    assert_eq!(resumer.plan(&copilot).await.unwrap_err(), NotResumable::Unsupported("Copilot"));
+    let unknown = row(HarnessKind::Unknown, "u-1", &dirs.here, false);
+    assert_eq!(resumer.plan(&unknown).await.unwrap_err(), NotResumable::Unsupported("unknown"));
+
+    // atuin doesn't write Copilot sessions: one whose log isn't here can't be restored.
+    let copilot = row(HarnessKind::Copilot, "cp-1", &dirs.here, true);
+    let err = resumer.plan(&copilot).await.unwrap_err();
+    assert_eq!(err, NotResumable::NotHere("Copilot"));
+    assert_eq!(
+        err.to_string(),
+        "it isn't on this machine, and atuin can't restore Copilot sessions"
+    );
 
     // A Claude Code subagent is refused by the harness before anything is looked up.
     let subagent = row(HarnessKind::ClaudeCode, "agent-a1b2", &dirs.here, true);
@@ -707,8 +716,29 @@ async fn only_other_installed_harnesses_are_offered(dirs: Dirs) {
     assert!(matches!(err, NotResumable::Continue("Claude Code", _)), "{err}");
     assert!(machine.written.lock().is_empty());
 
+    // A Copilot session can be continued in the others, but nothing is continued in Copilot.
     let copilot = row(HarnessKind::Copilot, "cp-1", &dirs.here, false);
-    assert!(resumer.continue_targets(&copilot).is_empty());
+    let targets = resumer.continue_targets(&copilot);
+    assert!(targets.contains(&HarnessKind::ClaudeCode), "{targets:?}");
+    assert!(!targets.contains(&HarnessKind::Copilot), "{targets:?}");
+    assert!(!resumer.continue_targets(&session).contains(&HarnessKind::Copilot));
+}
+
+/// A Copilot session whose log is here resumes in place, by its id.
+#[rstest]
+#[tokio::test]
+async fn a_copilot_session_here_resumes_by_its_id(dirs: Dirs) {
+    let mut machine = FakeMachine::default();
+    let log = dirs.here.join("events.jsonl");
+    machine.found.insert("cp-1".to_owned(), log.clone());
+    let copilot = row(HarnessKind::Copilot, "cp-1", &dirs.here, false);
+
+    let resume = resumer(&dirs, &machine).plan(&copilot).await.unwrap();
+
+    assert_eq!(resume.restore, None);
+    assert_eq!(resume.plan.program, "copilot");
+    assert_eq!(resume.plan.args, ["--resume=cp-1"]);
+    assert_eq!(resume.plan.native_path, Some(log));
 }
 
 #[rstest]

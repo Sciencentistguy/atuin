@@ -271,7 +271,6 @@ mod tests {
     #[case::no_terms(json!({"terms": []}))]
     #[case::blank(json!({"terms": ["   "]}))]
     #[case::unknown_harness(json!({"terms": ["x"], "harness": "emacs"}))]
-    #[case::uncapturable_harness(json!({"terms": ["x"], "harness": "copilot"}))]
     fn rejects_invalid_input(#[case] input: serde_json::Value) {
         assert!(serde_json::from_value::<AtuinThreadsSearchToolCall>(input).is_err());
     }
@@ -279,6 +278,7 @@ mod tests {
     #[rstest]
     #[case::claude_code("claude-code", HarnessKind::ClaudeCode)]
     #[case::codex("codex", HarnessKind::Codex)]
+    #[case::copilot("copilot", HarnessKind::Copilot)]
     #[case::opencode("opencode", HarnessKind::Opencode)]
     #[case::pi("pi", HarnessKind::Pi)]
     fn parses_each_harness(#[case] name: &str, #[case] expected: HarnessKind) {

@@ -78,6 +78,7 @@ impl Access {
                 | "run_terminal_cmd"
                 | "execute_command"
                 | "run_command"
+                | "powershell"
         ) {
             let command = match input.get("command").or_else(|| input.get("cmd")) {
                 Some(Value::String(line)) => Some(line.clone()),
@@ -234,7 +235,10 @@ mod tests {
     #[case::claude_bash("Bash", json!({"command": "cat .env"}), shell("cat .env", None))]
     #[case::codex_argv("shell", json!({"command": ["bash", "-lc", "ls"], "workdir": "/w"}), shell("ls", Some("/w")))]
     #[case::codex_exec("exec_command", json!(r#"{"cmd":"git status","workdir":"/w"}"#), shell("git status", Some("/w")))]
+    #[case::copilot_powershell("powershell", json!({"command": "type .env"}), shell("type .env", None))]
     #[case::claude_read("Read", json!({"file_path": "/w/.env"}), reads(&["/w/.env"]))]
+    #[case::copilot_view("view", json!({"path": "/w/.env", "view_range": [1, 5]}), reads(&["/w/.env"]))]
+    #[case::copilot_create("create", json!({"path": "/w/.env", "file_text": "x"}), writes(&["/w/.env"]))]
     #[case::opencode_read("read", json!({"filePath": "/w/.env"}), reads(&["/w/.env"]))]
     #[case::grep("Grep", json!({"pattern": "x", "path": "/w"}), reads(&["/w"]))]
     #[case::claude_write("Write", json!({"file_path": "/w/.env", "content": "A=1"}), writes(&["/w/.env"]))]

@@ -103,7 +103,7 @@ pub fn tool_note(name: &str, input: &Value) -> String {
     let lower = name.to_ascii_lowercase();
     let note = match lower.as_str() {
         "bash" | "shell" | "shell_command" | "exec_command" | "local_shell" | "container.exec"
-        | "unified_exec" => on(
+        | "unified_exec" | "powershell" => on(
             field(&["command", "cmd"])
                 .or_else(|| input["action"]["command"].as_array().map(|a| command_line(a))),
             &|c| format!("ran {}", code(c)),

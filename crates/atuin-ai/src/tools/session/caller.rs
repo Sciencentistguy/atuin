@@ -42,6 +42,7 @@ impl Caller<'_> {
         match self.client? {
             "claude-code" => Some(HarnessKind::ClaudeCode),
             "codex-mcp-client" => Some(HarnessKind::Codex),
+            "github-copilot-developer" => Some(HarnessKind::Copilot),
             "opencode" => Some(HarnessKind::Opencode),
             _ => None,
         }
@@ -219,6 +220,7 @@ mod tests {
     #[rstest]
     #[case::claude("claude-code", Some(HarnessKind::ClaudeCode))]
     #[case::codex("codex-mcp-client", Some(HarnessKind::Codex))]
+    #[case::copilot("github-copilot-developer", Some(HarnessKind::Copilot))]
     #[case::opencode("opencode", Some(HarnessKind::Opencode))]
     #[case::cursor("cursor-vscode", None)]
     fn maps_client_names_to_harnesses(#[case] name: &str, #[case] want: Option<HarnessKind>) {
