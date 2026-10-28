@@ -44,8 +44,11 @@ that the model reasoned.
 Copilot keeps less of a session than the others: Atuin reads its event log
 (`~/.copilot/session-state/<id>/events.jsonl`, under `$COPILOT_HOME` if set),
 which records only how many tokens each reply took, so a Copilot thread's
-usage counts output tokens only. What a subagent did is kept as the call that
-ran it and its result, not as a thread of its own. Atuin doesn't write
+usage counts output tokens only. A Copilot thread's title is the name you
+gave the session, else the summary Copilot wrote of it, read from the
+`workspace.yaml` beside the log; a title that changes while the session is
+idle shows once Copilot next writes to it. What a subagent did is kept as the
+call that ran it and its result, not as a thread of its own. Atuin doesn't write
 Copilot's sessions, so a Copilot thread resumes in Copilot only on a machine
 that has it, and can't be forked or caught up with sync; it can still be
 continued in another agent.

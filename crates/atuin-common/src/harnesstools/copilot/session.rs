@@ -12,18 +12,25 @@
 //!   make no row either.
 //! - **Per-call usage is not kept.** Copilot never writes `assistant.usage` to the log (it is
 //!   ephemeral), so a session's usage is what its assistant messages say: their output tokens.
+//! - **Titles are kept beside the log.** Copilot writes no line when a session's title changes
+//!   (`session.title_changed` is ephemeral too): the name the user gave it and the summary
+//!   Copilot wrote of it are in the session's `workspace.yaml`, which is looked at as the log is
+//!   read, each change to it going on the next line that makes a row ([`TitleFollower`]).
 
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::Value;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::sync::watch;
 use typed_builder::TypedBuilder;
+use yaml_rust2::YamlLoader;
 
 use crate::fs::tree_watcher::{FileStat, TreeWatcher};
 use crate::harnesstools::copilot::{Copilot, home};
@@ -43,6 +50,9 @@ use crate::sync::BlockingPool;
 
 /// The event log in each session's directory.
 const EVENTS: &str = "events.jsonl";
+
+/// What Copilot keeps of a session beside its log: where it works, and its titles.
+const WORKSPACE: &str = "workspace.yaml";
 
 #[derive(Debug, Clone, TypedBuilder)]
 pub struct CopilotSessions {
@@ -257,6 +267,7 @@ impl Session for CopilotSession {
             };
             // A checkpoint names a line's end, never 0: read from there, it no longer held.
             let over = from.is_some() && start == 0;
+            let mut titles = TitleFollower::new(&self.path, self.pool.clone());
             let lines = FollowLines::new(PooledReadLines::new(
                 PathLineReader::at(&self.path, start),
                 self.pool,
@@ -268,7 +279,10 @@ impl Session for CopilotSession {
             .js_json::<CopilotMessage>();
             for await item in messages {
                 yield match item {
-                    Ok((line, message)) => Ok((Checkpoint::after(&line).started_over(over), message)),
+                    Ok((line, message)) => {
+                        let message = titles.stamp(message).await;
+                        Ok((Checkpoint::after(&line).started_over(over), message))
+                    }
                     Err(err) => Err(MessageError::from(err)),
                 };
             }
@@ -276,16 +290,111 @@ impl Session for CopilotSession {
     }
 
     fn read(&self) -> impl Stream<Item = Result<CopilotMessage, MessageError>> + Send + 'static {
-        FollowLines::new(PooledReadLines::new(PathLineReader::new(&self.path), self.pool.clone()))
-            .read_to_end()
-            .js_json::<CopilotMessage>()
-            .map_ok(|(_, message)| message)
-            .map_err(MessageError::from)
+        let messages = FollowLines::new(PooledReadLines::new(
+            PathLineReader::new(&self.path),
+            self.pool.clone(),
+        ))
+        .read_to_end()
+        .js_json::<CopilotMessage>();
+        let mut titles = TitleFollower::new(&self.path, self.pool.clone());
+        async_stream::stream! {
+            for await item in messages {
+                yield match item {
+                    Ok((_, message)) => Ok(titles.stamp(message).await),
+                    Err(err) => Err(MessageError::from(err)),
+                };
+            }
+        }
     }
 
     async fn changed_after(mut self, since: std::time::SystemTime) -> Option<Self> {
         modified_after(self.changes.as_mut(), since).await?;
         Some(self)
+    }
+}
+
+/// A session's titles, as its `workspace.yaml` gives them: the name the user gave it (`/rename`)
+/// and the summary Copilot wrote of it, which Copilot's own session list shows when it has no
+/// name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Titles {
+    name: Option<String>,
+    summary: Option<String>,
+}
+
+impl Titles {
+    /// The titles in the workspace file at `path`; `None` when it can't be read or parsed (it may
+    /// not be written yet, or be mid-write).
+    fn read(path: &Path) -> Option<Self> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let docs = YamlLoader::load_from_str(&text).ok()?;
+        let doc = docs.first()?;
+        let title = |key: &str| {
+            doc[key].as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned)
+        };
+        Some(Self {
+            name: title("name"),
+            summary: title("summary"),
+        })
+    }
+
+    /// The title changes that take `self` to `now`, the user's name first.
+    fn changes(&self, now: &Self) -> Vec<TitleChange> {
+        [
+            (TitleSource::Named, &self.name, &now.name),
+            (TitleSource::Generated, &self.summary, &now.summary),
+        ]
+        .into_iter()
+        .filter(|(_, was, is)| was != is)
+        .map(|(source, _, is)| TitleChange::new(source, is.as_deref().unwrap_or_default()))
+        .collect()
+    }
+}
+
+/// Follows a session's titles in its `workspace.yaml` while its log is read, putting each change
+/// on the next line that makes a row: a line can carry one title change, so a name and a summary
+/// that changed together go on two. The file is read again only once it has been modified.
+///
+/// A title that changes while the session writes nothing more is taken up with its next line.
+struct TitleFollower {
+    path: PathBuf,
+    pool: BlockingPool,
+    /// When the titles were last read from the file, as it was then modified.
+    modified: Option<SystemTime>,
+    titles: Titles,
+    pending: VecDeque<TitleChange>,
+}
+
+impl TitleFollower {
+    /// For the session whose log is `log`.
+    fn new(log: &Path, pool: BlockingPool) -> Self {
+        Self {
+            path: log.with_file_name(WORKSPACE),
+            pool,
+            modified: None,
+            titles: Titles::default(),
+            pending: VecDeque::new(),
+        }
+    }
+
+    /// `message`, with the next title change on it when it makes a row.
+    async fn stamp(&mut self, mut message: CopilotMessage) -> CopilotMessage {
+        if message.id().is_none() || message.kind == "session.title_changed" {
+            return message;
+        }
+        let (path, seen) = (self.path.clone(), self.modified);
+        let read = self.pool.run(move || {
+            let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            let changed = modified.is_some() && modified != seen;
+            (modified, changed.then(|| Titles::read(&path)).flatten())
+        });
+        if let Ok((modified, Some(titles))) = read.await {
+            self.pending.extend(self.titles.changes(&titles));
+            self.titles = titles;
+            self.modified = modified;
+        }
+        message.workspace_title = self.pending.pop_front();
+        message
     }
 }
 
@@ -301,6 +410,9 @@ pub struct CopilotMessage {
     agent_id: Option<String>,
     #[serde(default)]
     data: Value,
+    /// A change to the session's titles in its `workspace.yaml` (see [`TitleFollower`]).
+    #[serde(skip)]
+    workspace_title: Option<TitleChange>,
 }
 
 /// Event types that make a row.
@@ -503,7 +615,7 @@ impl Message for CopilotMessage {
 
     fn title(&self) -> Option<TitleChange> {
         if self.kind != "session.title_changed" {
-            return None;
+            return self.workspace_title.clone();
         }
         Some(TitleChange::new(TitleSource::Generated, self.data_str("title")?))
     }
@@ -512,7 +624,9 @@ impl Message for CopilotMessage {
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroUsize;
+    use std::time::Duration;
 
+    use futures::TryStreamExt;
     use rstest::{fixture, rstest};
     use serde_json::json;
 
@@ -740,5 +854,125 @@ mod tests {
     fn a_title_change_titles_the_session() {
         let m = event("session.title_changed", json!({"title": "Fix the build"}));
         assert_eq!(m.title(), Some(TitleChange::new(TitleSource::Generated, "Fix the build")));
+    }
+
+    /// A `workspace.yaml` as Copilot writes one (`yaml.stringify`, `lineWidth: 0`).
+    fn workspace(name: Option<&str>, summary: &str) -> String {
+        let name = name.map(|n| format!("name: {n}\n")).unwrap_or_default();
+        format!(
+            "id: s1\ncwd: /work\nrepository: acme/proj\nbranch: main\n{name}summary: \"{summary}\"\n\
+             summary_count: 1\ncreated_at: 2026-10-28T12:00:00.000Z\n\
+             updated_at: 2026-10-28T12:01:00.000Z\n"
+        )
+    }
+
+    #[rstest]
+    #[case::named(
+        Some("Flaky test"),
+        "Fix a: flaky test",
+        Some("Flaky test"),
+        Some("Fix a: flaky test")
+    )]
+    #[case::unnamed(None, "Fix the build", None, Some("Fix the build"))]
+    #[case::blank_summary(None, "  ", None, None)]
+    fn reads_the_titles_from_the_workspace_file(
+        #[case] name: Option<&str>,
+        #[case] summary: &str,
+        #[case] want_name: Option<&str>,
+        #[case] want_summary: Option<&str>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(WORKSPACE);
+        std::fs::write(&path, workspace(name, summary)).unwrap();
+        assert_eq!(Titles::read(&path), Some(Titles {
+            name: want_name.map(str::to_owned),
+            summary: want_summary.map(str::to_owned),
+        }));
+    }
+
+    #[rstest]
+    #[case::missing(None)]
+    #[case::half_written(Some("name: [unclosed"))]
+    fn an_unreadable_workspace_file_has_no_titles(#[case] text: Option<&str>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(WORKSPACE);
+        if let Some(text) = text {
+            std::fs::write(&path, text).unwrap();
+        }
+        assert_eq!(Titles::read(&path), None);
+    }
+
+    #[rstest]
+    fn title_changes_put_the_name_first_and_clear_what_went() {
+        let titles = |name: Option<&str>, summary: Option<&str>| Titles {
+            name: name.map(str::to_owned),
+            summary: summary.map(str::to_owned),
+        };
+        let none = Titles::default();
+        assert_eq!(none.changes(&titles(Some("n"), Some("s"))), [
+            TitleChange::new(TitleSource::Named, "n"),
+            TitleChange::new(TitleSource::Generated, "s"),
+        ]);
+        assert_eq!(titles(Some("n"), Some("s")).changes(&titles(None, Some("s"))), [
+            TitleChange::new(TitleSource::Named, "")
+        ]);
+        assert!(titles(None, Some("s")).changes(&titles(None, Some("s"))).is_empty());
+    }
+
+    /// The titles go on the lines that make rows, one change each, and a rename while the log is
+    /// followed goes on the next.
+    #[rstest]
+    #[tokio::test]
+    async fn the_workspace_titles_go_on_the_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join(EVENTS);
+        let path = dir.path().join(WORKSPACE);
+        std::fs::write(&path, workspace(Some("Flaky test"), "Fix the flaky test")).unwrap();
+        let line = |id: &str, kind: &str, data: Value| {
+            let mut m: CopilotMessage = serde_json::from_value(json!({
+                "id": id, "timestamp": "2026-10-28T12:00:00Z", "type": kind,
+            }))
+            .unwrap();
+            m.data = data;
+            m
+        };
+        let mut titles = TitleFollower::new(&log, pool());
+
+        let hook = titles.stamp(line("h", "hook.start", json!({}))).await;
+        let start = titles.stamp(line("a", "session.start", json!({}))).await;
+        let prompt = titles.stamp(line("b", "user.message", json!({"content": "hi"}))).await;
+        let reply = titles.stamp(line("c", "assistant.message", json!({"content": "ok"}))).await;
+        assert_eq!(hook.title(), None, "bookkeeping makes no row to carry it");
+        assert_eq!(start.title(), Some(TitleChange::new(TitleSource::Named, "Flaky test")));
+        assert_eq!(
+            prompt.title(),
+            Some(TitleChange::new(TitleSource::Generated, "Fix the flaky test"))
+        );
+        assert_eq!(reply.title(), None);
+
+        std::fs::write(&path, workspace(Some("Timing"), "Fix the flaky test")).unwrap();
+        let later = SystemTime::now() + Duration::from_secs(5);
+        File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+        let next = titles.stamp(line("d", "user.message", json!({"content": "more"}))).await;
+        assert_eq!(next.title(), Some(TitleChange::new(TitleSource::Named, "Timing")));
+    }
+
+    /// A session read whole (an import) has its titles from the start.
+    #[rstest]
+    #[tokio::test]
+    async fn an_imported_session_has_its_titles(session_state: tempfile::TempDir) {
+        let session = session_state.path().join("s1");
+        std::fs::write(session.join(WORKSPACE), workspace(None, "List the files")).unwrap();
+        let read =
+            CopilotSession::open(SessionId::from("s1".to_owned()), session.join(EVENTS), pool());
+        let titles: Vec<_> = read
+            .read()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(Message::title)
+            .collect();
+        assert_eq!(titles, [TitleChange::new(TitleSource::Generated, "List the files")]);
     }
 }
