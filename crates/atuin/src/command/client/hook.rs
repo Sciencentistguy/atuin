@@ -172,6 +172,7 @@ mod tests {
 
     #[rstest]
     #[case::codex("codex")]
+    #[case::copilot("copilot")]
     #[case::opencode("opencode")]
     #[case::pi("pi")]
     fn parse_hook_install_command(#[case] agent_name: &str) {

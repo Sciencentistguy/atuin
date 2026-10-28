@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use atuin_common::string::NonNulStr;
 use serde_json::error::Category;
 
-use super::wire::{HookEventName, WireHookEvent, WireToolName};
+use super::wire::{HookEventName, WireHookEvent, WireToolInput, WireToolName};
 use crate::i18n::fl;
 
 /// Why a hook payload could not be parsed.
@@ -56,7 +56,8 @@ impl From<WireHookEvent> for Option<HookEvent> {
     ///
     /// We **don't** care about:
     ///   - Non-`Bash` tool invocations.
-    ///   - Tool invocations which are missing a `tool_use_id`.
+    ///   - Tool invocations which are missing a `tool_use_id`, unless their
+    ///     session and command stand in for it (see [`correlation_id`]).
     fn from(wire: WireHookEvent) -> Self {
         if matches!(wire.tool_name, WireToolName::Other) {
             return None;
@@ -64,10 +65,9 @@ impl From<WireHookEvent> for Option<HookEvent> {
 
         // Present but empty is as good as missing: a start could never be
         // matched to its end.
-        if wire.tool_use_id.is_empty() {
-            return None;
-        }
-        let tool_use_id = wire.tool_use_id;
+        let tool_use_id = wire.tool_use_id.filter(|id| !id.is_empty()).or_else(|| {
+            correlation_id(wire.session_id.as_deref()?, wire.tool_input.as_ref()?)
+        })?;
 
         match wire.hook_event_name {
             HookEventName::PreToolUse => {
@@ -87,18 +87,37 @@ impl From<WireHookEvent> for Option<HookEvent> {
             }
             HookEventName::PostToolUse => Some(HookEvent::End {
                 tool_use_id,
-                exit: wire.tool_response.and_then(|response| response.exit_code()),
+                exit: wire
+                    .tool_response
+                    .and_then(|response| response.exit_code())
+                    .or_else(|| wire.tool_result.and_then(|result| result.exit_code())),
                 transcript: wire.transcript_path,
             }),
             // Failed: with the exit code its error starts with (`Exit code 2`), else 1.
             HookEventName::PostToolUseFailure => Some(HookEvent::End {
                 tool_use_id,
-                exit: Some(wire.error.as_deref().and_then(failure_exit_code).unwrap_or(1)),
+                exit: Some(
+                    wire.error
+                        .as_ref()
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(failure_exit_code)
+                        .unwrap_or(1),
+                ),
                 transcript: wire.transcript_path,
             }),
             HookEventName::Other => None,
         }
     }
+}
+
+/// What stands in for the tool use id of a call to `input` in `session`, for an
+/// agent that names no tool use (Copilot): the same for its start and its end,
+/// as both carry the session and the command. Two runs of one command at once
+/// in one session are taken for one.
+fn correlation_id(session: &str, input: &WireToolInput) -> Option<String> {
+    let command = input.command.as_ref().filter(|command| !command.is_empty())?;
+    let key = format!("{session}\0{}", command.as_str());
+    Some(format!("session-{:016x}", xxhash_rust::xxh3::xxh3_64(key.as_bytes())))
 }
 
 /// The exit code a Claude Code failure's `error` starts with (`Exit code <n>`), if it does.
@@ -135,6 +154,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// What stands in for the tool use id of Copilot's `cargo test` in its session.
+    const COPILOT_CALL: &str = "session-17a959917f7bef62";
 
     fn non_nul(s: &str) -> NonNulStr {
         NonNulStr::new(s.to_owned()).unwrap()
@@ -237,6 +259,57 @@ mod tests {
             tool_use_id: "exec-55bd0a92-7032-4356-b380-ac1cc1ea66f4".into(),
             exit: None,
             transcript: Some("/w/.codex/sessions/2026/10/09/rollout-x.jsonl".into()),
+        })
+    )]
+    // Copilot (1.0.63, `PostToolUse` configured under its Claude Code name) names no tool use:
+    // its session and command stand in for one, and its output ends in the exit code.
+    #[case::copilot_post_tool_use(
+        json!({
+            "hook_event_name": "PostToolUse",
+            "session_id": "5e0f2a3c-8d41-4b6e-9a77-3c1d2e4f5a6b",
+            "timestamp": "2026-10-28T12:00:20.000Z",
+            "cwd": "/w",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo test", "description": "Run the tests"},
+            "tool_result": {
+                "result_type": "success",
+                "text_result_for_llm": "test result: FAILED\n<exited with exit code 101>"
+            }
+        }),
+        Some(HookEvent::End { tool_use_id: COPILOT_CALL.into(), exit: Some(101), transcript: None })
+    )]
+    #[case::copilot_failure_without_an_exit_code(
+        json!({
+            "hook_event_name": "PostToolUse",
+            "session_id": "5e0f2a3c-8d41-4b6e-9a77-3c1d2e4f5a6b",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"},
+            "tool_result": {"result_type": "failure", "text_result_for_llm": "denied"}
+        }),
+        Some(HookEvent::End { tool_use_id: COPILOT_CALL.into(), exit: Some(1), transcript: None })
+    )]
+    // An `error` that isn't text still ends the command's entry.
+    #[case::copilot_post_tool_use_failure(
+        json!({
+            "hook_event_name": "PostToolUseFailure",
+            "session_id": "5e0f2a3c-8d41-4b6e-9a77-3c1d2e4f5a6b",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"},
+            "error": {"message": "spawn failed"}
+        }),
+        Some(HookEvent::End { tool_use_id: COPILOT_CALL.into(), exit: Some(1), transcript: None })
+    )]
+    #[case::copilot_pre_tool_use(
+        json!({
+            "hook_event_name": "PreToolUse",
+            "session_id": "5e0f2a3c-8d41-4b6e-9a77-3c1d2e4f5a6b",
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo test", "description": "Run the tests"}
+        }),
+        Some(HookEvent::Start {
+            command: non_nul("cargo test"),
+            intent: Some("Run the tests".into()),
+            tool_use_id: COPILOT_CALL.into(),
         })
     )]
     // Non-Bash tools are never recorded.
@@ -355,6 +428,27 @@ mod tests {
         #[case] expected: Option<HookEvent>,
     ) {
         assert_eq!(HookEvent::from_json_str(input).unwrap(), expected);
+    }
+
+    /// Each run of a command in a Copilot session starts and ends under one id; another
+    /// command, or the same in another session, under another.
+    #[rstest]
+    fn copilot_commands_correlate_by_session_and_command() {
+        let id = |session: &str, command: &str| {
+            let input = json!({
+                "hook_event_name": "PreToolUse",
+                "session_id": session,
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            });
+            match HookEvent::from_json_str(&input.to_string()).unwrap() {
+                Some(HookEvent::Start { tool_use_id, .. }) => tool_use_id,
+                other => panic!("not a start: {other:?}"),
+            }
+        };
+        assert_eq!(id("a", "ls"), id("a", "ls"));
+        assert_ne!(id("a", "ls"), id("a", "pwd"));
+        assert_ne!(id("a", "ls"), id("b", "ls"));
     }
 
     /// Well-formed JSON that isn't a hook event we model is skipped, not an

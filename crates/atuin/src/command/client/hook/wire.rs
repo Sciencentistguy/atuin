@@ -1,7 +1,7 @@
 //! Typed wire protocol for the hook events coding agents send to `atuin hook`.
 //!
-//! Claude Code and Codex invoke `atuin hook <agent>` for each tool use and
-//! pass the event as JSON on stdin.
+//! Claude Code, Codex and Copilot invoke `atuin hook <agent>` for each tool use
+//! and pass the event as JSON on stdin.
 
 use std::path::PathBuf;
 
@@ -25,7 +25,13 @@ pub struct WireHookEvent {
     /// The tool that ran; we only record `Bash`.
     pub tool_name: WireToolName,
     /// Correlates a command's start and end across two `atuin hook` invocations.
-    pub tool_use_id: String,
+    /// Copilot sends none (see [`Self::session_id`]).
+    #[serde(default)]
+    pub tool_use_id: Option<String>,
+    /// The agent's session. With the command, what correlates a Copilot
+    /// command's start and end, as Copilot names no tool use.
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// The command about to run. Present on `PreToolUse`; absent (and unread)
     /// on the completion events.
     #[serde(default)]
@@ -33,10 +39,14 @@ pub struct WireHookEvent {
     /// How the command finished. Present on `PostToolUse`; absent elsewhere.
     #[serde(default)]
     pub tool_response: Option<WireToolResponse>,
-    /// Why the command failed, on Claude Code's `PostToolUseFailure`: for a shell command that
-    /// exited non-zero, `Exit code <n>` and then its output.
+    /// How the command finished, on Copilot's `PostToolUse`.
     #[serde(default)]
-    pub error: Option<String>,
+    pub tool_result: Option<WireToolResult>,
+    /// Why the command failed, on Claude Code's `PostToolUseFailure`: for a shell command that
+    /// exited non-zero, `Exit code <n>` and then its output. A value, as Copilot's may not be
+    /// text: an event that failed to decode would leave its command's entry open.
+    #[serde(default)]
+    pub error: Option<serde_json::Value>,
     /// The session's transcript, where Codex records a command's exit code (its
     /// `tool_response` is only the output).
     #[serde(default)]
@@ -87,5 +97,28 @@ impl WireToolResponse {
             WireToolResponse::Output(_) => None,
             WireToolResponse::Object { exit_code } => *exit_code,
         }
+    }
+}
+
+/// See [`WireHookEvent::tool_result`].
+#[derive(Debug, Deserialize)]
+pub struct WireToolResult {
+    /// `success`, `failure`, `rejected` or `denied`.
+    #[serde(default)]
+    pub result_type: Option<String>,
+    /// What the model was given: the command's output, ending in the exit code
+    /// (`<exited with exit code 1>`).
+    #[serde(default)]
+    pub text_result_for_llm: Option<String>,
+}
+
+impl WireToolResult {
+    /// The exit code the output ends with, else 1 for a call that failed.
+    pub fn exit_code(&self) -> Option<i64> {
+        let said = self.text_result_for_llm.as_deref().and_then(|text| {
+            let (_, code) = text.trim_end().lines().last()?.rsplit_once("exit code ")?;
+            code.trim_end_matches('>').trim().parse().ok()
+        });
+        said.or_else(|| (self.result_type.as_deref() == Some("failure")).then_some(1))
     }
 }
